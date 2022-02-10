@@ -53,9 +53,9 @@ def load_data(temps=[-25,-15,-5,5,15,25,35,45]):
     for temp in temps:
 
         if temp < 0:
-            filename = '../data/P14_OCV/P14_OCV_N%d.mat' % (abs(temp))
+            filename = 'data/P14_OCV/P14_OCV_N%d.mat' % (abs(temp))
         else:
-            filename = '../data/P14_OCV/P14_OCV_P%d.mat' % (abs(temp))
+            filename = 'data/P14_OCV/P14_OCV_P%d.mat' % (abs(temp))
 
         data[temp] = scipy.io.loadmat(filename, simplify_cells=True)['OCVData']
 
@@ -156,7 +156,6 @@ def process_OCV25(data):
     data[25]['eta'] = eta_25
 
     return data
-
 
 
 def process_OCV(data):
@@ -289,9 +288,7 @@ def create_lookup_table(data):
 def run_process_OCV():
 
     exp_data = load_data()
-
     data = process_OCV25(exp_data)
-
     data = process_OCV(data)
 
     OCV0, OCVrel = create_lookup_table(data)
@@ -309,6 +306,26 @@ def run_process_OCV():
     plt.legend()
     plt.ylabel('Voltage (V)',fontsize=16)
     plt.xlabel('State of Charge',fontsize=16)
+
+    return OCV0, OCVrel
+
+
+def SOC_temp_to_OCV(z,T,two_decimals=True):
+
+    exp_data = load_data()
+    data = process_OCV25(exp_data)
+    data = process_OCV(data)
+    OCV0, OCVrel = create_lookup_table(data)
+
+    OCV_T = OCV0 + T*OCVrel
+    OCV_curve = interp1d(data[5]['SOC'],OCV_T)
+
+    estimated_OCV = OCV_curve(z)
+
+    if two_decimals == True:
+        estimated_OCV = np.round(estimated_OCV,2)
+
+    return estimated_OCV
 
 
 if __name__ == '__main__':
