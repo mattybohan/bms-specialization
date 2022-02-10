@@ -8,8 +8,10 @@ class Test(unittest.TestCase):
 
         test_values = [
             (0.55,33,3.88),
-            (0.55,33,3.88),
-            (0.55,33,3.88),
+            (0.95,5,4.07),
+            (0.11,-9,3.54),
+            (0.50,25,3.86),
+            (1.00,50,4.15),
         ]
         for z,t,v in test_values:
             self.assertEqual(SOC_temp_to_OCV(z,t), v, "Should be %s" % str(v))
