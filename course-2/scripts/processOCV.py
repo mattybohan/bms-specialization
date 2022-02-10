@@ -318,7 +318,9 @@ def SOC_temp_to_OCV(z,T,two_decimals=True):
     OCV0, OCVrel = create_lookup_table(data)
 
     OCV_T = OCV0 + T*OCVrel
-    OCV_curve = interp1d(data[5]['SOC'],OCV_T)
+    OCV_curve = interp1d(data[5]['SOC'], OCV_T, \
+        kind='linear', \
+        fill_value='extrapolate')
 
     estimated_OCV = OCV_curve(z)
 
