@@ -17,7 +17,7 @@ class Test(unittest.TestCase):
             (1.00,50,4.15),
         ]
         for z,t,v in test_values:
-            self.assertAlmostEqual(model.SOC_temp_to_OCV(z,t), v, places=1, msg="Should be %s" % str(v))
+            self.assertAlmostEqual(model.SOC_temp_to_OCV(z,t)[0], v, places=1, msg="Should be %s" % str(v))
 
 if __name__ == '__main__':
     test_SOC_temp_to_OCV()

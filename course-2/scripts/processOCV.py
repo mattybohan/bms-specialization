@@ -48,8 +48,8 @@ from scipy.interpolate import interp1d
 
 class processOCV:
 
-    def __init__(self):
-        self.data_dir = 'data/P14_OCV/'
+    def __init__(self,data_dir='data/P14_OCV/'):
+        self.data_dir = data_dir
         self.data = dict()
         self.temps = [-25,-15,-5,5,15,25,35,45]
         self.scripts = ['script1','script2','script3','script4']
@@ -215,7 +215,7 @@ class processOCV:
 
         print('Estimated Open Circuit Voltage (T=%d C,SOC=%f): %f' % (temp,z,estimated_OCV))
 
-        return estimated_OCV
+        return estimated_OCV, OCV_T
 
 
 if __name__ == '__main__':
