@@ -1,10 +1,13 @@
 import unittest
-from scripts.processOCV import SOC_temp_to_OCV
+from scripts.processOCV import processOCV
 
 
 class Test(unittest.TestCase):
 
     def test_SOC_temp_to_OCV(self):
+
+        model = processOCV()
+        model.run()
 
         test_values = [
             (0.55,33,3.88),
@@ -14,7 +17,7 @@ class Test(unittest.TestCase):
             (1.00,50,4.15),
         ]
         for z,t,v in test_values:
-            self.assertAlmostEqual(SOC_temp_to_OCV(z,t), v, places=1, msg="Should be %s" % str(v))
+            self.assertAlmostEqual(model.SOC_temp_to_OCV(z,t), v, places=1, msg="Should be %s" % str(v))
 
 if __name__ == '__main__':
     test_SOC_temp_to_OCV()

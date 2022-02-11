@@ -46,201 +46,181 @@ from scipy.interpolate import interp1d
 # contain at least one data point each.
 
 
-def load_data(temps=[-25,-15,-5,5,15,25,35,45]):
+class processOCV:
 
-    data = dict()
+    def __init__(self):
+        self.data_dir = 'data/P14_OCV/'
+        self.data = dict()
+        self.temps = [-25,-15,-5,5,15,25,35,45]
+        self.scripts = ['script1','script2','script3','script4']
+        self.SOC = np.arange(0,1,0.005)
+        self.model = dict()
 
-    for temp in temps:
+    def load_data(self,verbose=False):
 
-        if temp < 0:
-            filename = 'data/P14_OCV/P14_OCV_N%d.mat' % (abs(temp))
-        else:
-            filename = 'data/P14_OCV/P14_OCV_P%d.mat' % (abs(temp))
+        for temp in self.temps:
+            if temp < 0:
+                filename = self.data_dir + 'P14_OCV_N%d.mat' % (abs(temp))
+            else:
+                filename = self.data_dir + 'P14_OCV_P%d.mat' % (abs(temp))
 
-        data[temp] = scipy.io.loadmat(filename, simplify_cells=True)['OCVData']
+            self.data[temp] = scipy.io.loadmat(filename, simplify_cells=True)['OCVData']
+            if verbose:
+                print('Loaded: ',filename)
 
-        print('Loaded: ',filename)
+        for key in self.data.keys():
+            self.model[key] = dict()
 
-    return data
+    def process_OCV(self):
 
+        self.temps = list(self.data.keys())
 
-def process_OCV(data):
+        if 25 not in self.temps:
+            raise FileNotFoundError
 
-    scripts = ['script1','script2','script3','script4']
+        self.temps.remove(25)
+        self.temps = [25] + self.temps
 
-    if 25 not in data.keys():
-        raise FileNotFoundError
+        for temp in self.temps:
 
-    temps = list(data.keys())
-    temps.remove(25)
-    temps = [25] + temps
+            total_discharge = 0
+            total_charge = 0
 
-    for temp in temps:
+            for script in self.scripts:
+                total_discharge += self.data[temp][script]['disAh'][-1]
+                total_charge += self.data[temp][script]['chgAh'][-1]
 
-        total_discharge = 0
-        total_charge = 0
+            eta_t = total_discharge / total_charge
 
-        for script in scripts:
-            total_discharge += data[temp][script]['disAh'][-1]
-            total_charge += data[temp][script]['chgAh'][-1]
+            if temp == 25:
+                self.eta_25 = eta_t
 
-        eta_t = total_discharge / total_charge
+            Q_t = self.data[temp]['script1']['disAh'][-1] \
+             + self.data[temp]['script2']['disAh'][-1] \
+             - self.eta_25*self.data[temp]['script1']['chgAh'][-1] \
+             - self.eta_25*self.data[temp]['script2']['chgAh'][-1]
 
-        if temp == 25:
-            eta_25 = eta_t
+            df_1 = pd.DataFrame(self.data[temp]['script1'])
 
-        Q_t = data[temp]['script1']['disAh'][-1] \
-         + data[temp]['script2']['disAh'][-1] \
-         - eta_25*data[temp]['script1']['chgAh'][-1] \
-         - eta_25*data[temp]['script2']['chgAh'][-1]
+            # Beginning of discharge
+            IR1Da = df_1[df_1['step'] == 1].tail(1).voltage.values[0] \
+                    - df_1[df_1['step'] == 2].head(1).voltage.values[0]
 
-        df_1 = pd.DataFrame(data[temp]['script1'])
+            # End of discharge
+            IR2Da = df_1[df_1['step'] == 3].head(1).voltage.values[0] \
+                    - df_1[df_1['step'] == 2].tail(1).voltage.values[0]
 
-        # Beginning of discharge
-        IR1Da = df_1[df_1['step'] == 1].tail(1).voltage.values[0] \
-                - df_1[df_1['step'] == 2].head(1).voltage.values[0]
+            IndC = np.where(self.data[temp]['script3']['step'] == 2)[0]
 
-        # End of discharge
-        IR2Da = df_1[df_1['step'] == 3].head(1).voltage.values[0] \
-                - df_1[df_1['step'] == 2].tail(1).voltage.values[0]
+            # Beginning of charge
+            IR1Ca = self.data[temp]['script3']['voltage'][IndC[0]] \
+                - self.data[temp]['script3']['voltage'][IndC[0]-1]
 
-        IndC = np.where(data[temp]['script3']['step'] == 2)[0]
+            # End of charge
+            IR2Ca = self.data[temp]['script3']['voltage'][IndC[-1]] \
+                - self.data[temp]['script3']['voltage'][IndC[-1]+1]
 
-        # Beginning of charge
-        IR1Ca = data[temp]['script3']['voltage'][IndC[0]] \
-            - data[temp]['script3']['voltage'][IndC[0]-1]
+            # These are just some sanity checks to keep these correction factors
+            # from getting too large in case of data issues
+            IR1D = min(IR1Da,2*IR2Ca)
+            IR2D = min(IR2Da,2*IR1Ca)
+            IR1C = min(IR1Ca,2*IR2Da)
+            IR2C = min(IR2Ca,2*IR1Da)
 
-        # End of charge
-        IR2Ca = data[temp]['script3']['voltage'][IndC[-1]] \
-            - data[temp]['script3']['voltage'][IndC[-1]+1]
+            # Discharge voltage & SOC curves
+            IndD = np.where(self.data[temp]['script1']['step'] == 2)[0]
+            blend = np.linspace(0,1,len(IndD))
+            IRblend = IR1D + (IR2D-IR1D)*blend
+            disV = self.data[temp]['script1']['voltage'][IndD] + IRblend
 
-        # These are just some sanity checks to keep these correction factors
-        # from getting too large in case of data issues
-        IR1D = min(IR1Da,2*IR2Ca)
-        IR2D = min(IR2Da,2*IR1Ca)
-        IR1C = min(IR1Ca,2*IR2Da)
-        IR2C = min(IR2Ca,2*IR1Da)
+            # Z = State of Charge
+            disZ = 1 - self.data[temp]['script1']['disAh'][IndD]/Q_t
+            disZ = disZ + (1 - disZ[0])
 
-        # Discharge voltage & SOC curves
-        IndD = np.where(data[temp]['script1']['step'] == 2)[0]
-        blend = np.linspace(0,1,len(IndD))
-        IRblend = IR1D + (IR2D-IR1D)*blend
-        disV = data[temp]['script1']['voltage'][IndD] + IRblend
+            assert disZ.shape == disV.shape
 
-        # Z = State of Charge
-        disZ = 1 - data[temp]['script1']['disAh'][IndD]/Q_t
-        disZ = disZ + (1 - disZ[0])
+            # Charge voltage & SOC curves
+            blend = np.linspace(0,1,len(IndC))
+            IRblend = IR1C + (IR2C-IR1C)*blend
+            chgV = self.data[temp]['script3']['voltage'][IndC] - IRblend
+            chgZ = self.data[temp]['script3']['chgAh'][IndC]/Q_t
+            chgZ = chgZ - chgZ[0]
 
-        assert disZ.shape == disV.shape
+            assert chgZ.shape == chgV.shape
 
-        # Charge voltage & SOC curves
-        blend = np.linspace(0,1,len(IndC))
-        IRblend = IR1C + (IR2C-IR1C)*blend
-        chgV = data[temp]['script3']['voltage'][IndC] - IRblend
-        chgZ = data[temp]['script3']['chgAh'][IndC]/Q_t
-        chgZ = chgZ - chgZ[0]
+            charge_interpolate = interp1d(chgZ,chgV)
+            discharge_interpolate = interp1d(disZ,disV)
 
-        assert chgZ.shape == chgV.shape
+            deltaV50 = charge_interpolate(0.5) - discharge_interpolate(0.5)
 
-        charge_interpolate = interp1d(chgZ,chgV)
-        discharge_interpolate = interp1d(disZ,disV)
+            # Select points on charge curve where SOC < 50%.
+            ind = np.where(chgZ < 0.5)[0]
+            vChg = chgV[ind] - chgZ[ind]*deltaV50
+            zChg = chgZ[ind]
 
-        deltaV50 = charge_interpolate(0.5) - discharge_interpolate(0.5)
+            # Select points on charge curve where SOC > 50%.
+            ind = np.where(disZ > 0.5)[0]
+            vDis = (disV[ind] + ((1 - disZ[ind])*deltaV50))[::-1]
+            zDis = (disZ[ind])[::-1]
 
-        # Select points on charge curve where SOC < 50%.
-        ind = np.where(chgZ < 0.5)[0]
-        vChg = chgV[ind] - chgZ[ind]*deltaV50
-        zChg = chgZ[ind]
+            rawocv_interpolation = interp1d(np.concatenate([zChg,zDis]), \
+                                    np.concatenate([vChg,vDis]), \
+                                    kind='linear',fill_value="extrapolate")
+            rawocv = rawocv_interpolation(self.SOC)
 
-        # Select points on charge curve where SOC > 50%.
-        ind = np.where(disZ > 0.5)[0]
-        vDis = (disV[ind] + ((1 - disZ[ind])*deltaV50))[::-1]
-        zDis = (disZ[ind])[::-1]
+            self.model[temp]['SOC'] = self.SOC
+            self.model[temp]['rawocv'] = rawocv
+            self.model[temp]['Q'] = Q_t
+            self.model[temp]['eta'] = eta_t
 
-        SOC = np.arange(0,1,0.005)
-        rawocv_interpolation = interp1d(np.concatenate([zChg,zDis]), \
-                                np.concatenate([vChg,vDis]), \
-                                kind='linear',fill_value="extrapolate")
-        rawocv = rawocv_interpolation(SOC)
+    def create_lookup_table(self):
+        # Use only data where T > 0C as cold temperate data
+        temps = [x for x in self.data.keys() if x > 0]
+        num_temps = len(temps)
+        ocv_size = self.model[25]['rawocv'].shape[0]
 
-        data[temp]['SOC'] = SOC
-        data[temp]['rawocv'] = rawocv
-        data[temp]['Q'] = Q_t
-        data[temp]['eta'] = eta_t
+        ocv_arr = np.ones((num_temps,ocv_size))
+        temp_arr = np.ones((num_temps,1))
 
-    return data
+        for ind,temp in enumerate(temps):
+            temp_arr[ind] = temp
+            ocv_arr[ind] = self.model[temp]['rawocv']
 
+        temp_arr = np.hstack((np.ones((len(temp_arr),1)),temp_arr))
 
-def create_lookup_table(data):
+        # Solve linear set of equations, A*x = y
+        A = temp_arr
+        y = ocv_arr
 
-    # Use only data where T > 0C as cold temperate data
-    temps = [x for x in data.keys() if x > 0]
-    num_temps = len(temps)
-    ocv_size = data[25]['rawocv'].shape[0]
+        self.OCV0, self.OCVrel = np.linalg.lstsq(A, y, rcond=None)[0]
 
-    ocv_arr = np.ones((num_temps,ocv_size))
-    temp_arr = np.ones((num_temps,1))
+    def run(self):
 
-    for ind,temp in enumerate(temps):
-        temp_arr[ind] = temp
-        ocv_arr[ind] = data[temp]['rawocv']
+        self.load_data()
+        self.process_OCV()
+        self.create_lookup_table()
 
-    temp_arr = np.hstack((np.ones((len(temp_arr),1)),temp_arr))
+    def SOC_temp_to_OCV(self,z,temp,two_decimals=True):
 
-    # Solve linear set of equations, A*x = y
-    A = temp_arr
-    y = ocv_arr
+        OCV_T = self.OCV0 + temp*self.OCVrel
+        OCV_curve = interp1d(self.SOC, \
+            OCV_T, \
+            kind='linear', \
+            fill_value='extrapolate')
 
-    OCV0, OCVrel = np.linalg.lstsq(A, y, rcond=None)[0]
+        estimated_OCV = OCV_curve(z)
 
-    return OCV0, OCVrel
+        if two_decimals == True:
+            estimated_OCV = np.round(estimated_OCV,2)
 
+        print('Estimated Open Circuit Voltage (T=%d C,SOC=%f): %f' % (temp,z,estimated_OCV))
 
-def run_process_OCV():
-
-    data = load_data()
-    #data = process_OCV25(exp_data)
-    data = process_OCV(data)
-
-    OCV0, OCVrel = create_lookup_table(data)
-
-    T = -5
-    OCV_T = OCV0 + T*OCVrel
-
-    testSOC = 0.55
-    testOCV = interp1d(data[5]['SOC'],OCV_T)
-
-    print(testOCV(testSOC))
-
-    plt.figure(figsize=(10,7))
-    plt.plot(data[5]['SOC'],OCV_T,label=T)
-    plt.legend()
-    plt.ylabel('Voltage (V)',fontsize=16)
-    plt.xlabel('State of Charge',fontsize=16)
-
-    return OCV0, OCVrel
-
-
-def SOC_temp_to_OCV(z,T,two_decimals=True):
-
-    data = load_data()
-    #data = process_OCV25(exp_data)
-    data = process_OCV(data)
-    OCV0, OCVrel = create_lookup_table(data)
-
-    OCV_T = OCV0 + T*OCVrel
-    OCV_curve = interp1d(data[5]['SOC'], OCV_T, \
-        kind='linear', \
-        fill_value='extrapolate')
-
-    estimated_OCV = OCV_curve(z)
-
-    if two_decimals == True:
-        estimated_OCV = np.round(estimated_OCV,2)
-
-    return estimated_OCV
+        return estimated_OCV
 
 
 if __name__ == '__main__':
 
-    run_process_OCV()
+    model = processOCV()
+    model.run()
+
+    OCV = model.SOC_temp_to_OCV(0.5,25)
