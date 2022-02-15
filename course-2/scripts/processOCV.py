@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
+from joblib import dump
+
 
 # Technical note: PROCESSOCV assumes that specific Arbin test scripts
 # have been executed to generate the input files. "makeMATfiles.m"
@@ -217,10 +219,17 @@ class processOCV:
 
         return estimated_OCV, OCV_T
 
+    def save(self):
 
+        dump(self.model,'data/p14model-ocv.pkl')
+        dump(self.data,'data/p14model-data.pkl')
+
+    
 if __name__ == '__main__':
 
     model = processOCV()
     model.run()
 
     OCV = model.SOC_temp_to_OCV(0.5,25)
+
+    model.save()
