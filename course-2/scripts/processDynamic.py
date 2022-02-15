@@ -69,30 +69,30 @@ from processOCV import processOCV
 class processDynamic:
 
     def __init__(self, \
-        data_dir='P14_DYN/', \
-        model_dir='data/', \
-        num_poles=1, \
-        do_hyst=1):
-      self.model = scipy.io.loadmat('../data/p14model-ocv-mat7.mat', simplify_cells=True)['model']
-      self.data_dir = data_dir
-      self.model_dir = model_dir
-      self.temps = [5,25,45]
-      self.magnitudes = [30,50,50]
-      self.scripts = ['script1','script2','script3']
-      self.num_poles = num_poles
-      self.do_hyst = do_hyst
-      self.data = dict()
+            data_dir='P14_DYN/', \
+            model_dir='data/', \
+            num_poles=1, \
+            do_hyst=1):
+        self.model = scipy.io.loadmat('../data/p14model-ocv-mat7.mat', simplify_cells=True)['model']
+        self.data_dir = data_dir
+        self.model_dir = model_dir
+        self.temps = [5,25,45]
+        self.magnitudes = [30,50,50]
+        self.scripts = ['script1','script2','script3']
+        self.num_poles = num_poles
+        self.do_hyst = do_hyst
+        self.data = dict()
 
     def load_data(self,verbose=False):
 
         for temp,mag in zip(self.temps,self.magnitudes):
-          if temp < 0:
+            if temp < 0:
               filename = self.model_dir + self.data_dir + 'P14_DYN_%d_N%d.mat' % (mag,abs(temp))
-          else:
+            else:
               filename = self.model_dir + self.data_dir + 'P14_DYN_%d_P%d.mat' % (mag,abs(temp))
 
-          self.data[temp] = scipy.io.loadmat(filename, simplify_cells=True)['DYNData']
-          if verbose:
+            self.data[temp] = scipy.io.loadmat(filename, simplify_cells=True)['DYNData']
+            if verbose:
               print('Loaded: ',filename)
 
         for key in self.data.keys():
@@ -104,7 +104,7 @@ class processDynamic:
         self.temps = list(self.data.keys())
 
         if 25 not in self.temps:
-          raise FileNotFoundError
+            raise FileNotFoundError
 
         self.temps.remove(25)
         self.temps = [25] + self.temps
@@ -134,13 +134,14 @@ class processDynamic:
     def process_DYN_step2(self):
 
         # Step 2: Compute OCV for "discharge portion" of test
-        model = processOCV()
+        model = processOCV(data_dir='../data/P14_OCV/')
+        model.run()
 
         for temp in self.temps:
             eta_param = self.model[temp]['eta']
             charge_indices = np.where(self.data[temp]['script1']['current'] < 0)
             corrected_current = self.data[temp]['script1']['current']
-            corrected_current[charge_indices] = eta_param*corrected_current
+            corrected_current[charge_indices] = eta_param*corrected_current[charge_indices]
 
-            self.model[temp]['Z'] = 1 - (np.cumsum(corrected_current)*(1/self.model[temp]['Q']*3600))
+            self.model[temp]['Z'] = 1 - np.cumsum(corrected_current)/int(self.model[temp]['Q']*3600)
             self.model[temp]['OCV'] = model.SOC_temp_to_OCV(self.model[temp]['Z'],temp)

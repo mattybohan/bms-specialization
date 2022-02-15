@@ -215,7 +215,7 @@ class processOCV:
         if two_decimals == True:
             estimated_OCV = np.round(estimated_OCV,2)
 
-        print('Estimated Open Circuit Voltage (T=%d C,SOC=%f): %f' % (temp,z,estimated_OCV))
+        #print('Estimated Open Circuit Voltage (T=%d C,SOC=%f): %f' % (temp,z,estimated_OCV))
 
         return estimated_OCV, OCV_T
 
@@ -224,7 +224,7 @@ class processOCV:
         dump(self.model,'data/p14model-ocv.pkl')
         dump(self.data,'data/p14model-data.pkl')
 
-    
+
 if __name__ == '__main__':
 
     model = processOCV()
