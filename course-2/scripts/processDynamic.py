@@ -1,4 +1,4 @@
-import scipy.io
+import scipy.io, math
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -96,7 +96,9 @@ class processDynamic:
               print('Loaded: ',filename)
 
         for key in self.data.keys():
-          self.model[key] = dict()
+            self.model[key] = dict()
+            self.model[key]['GParam'] = 0
+            self.model[key]['RCParam'] = [0]
 
     def process_DYN_step1(self):
 
@@ -145,3 +147,71 @@ class processDynamic:
 
             self.model[temp]['Z'] = 1 - np.cumsum(corrected_current)/int(self.model[temp]['Q']*3600)
             self.model[temp]['OCV'] = model.SOC_temp_to_OCV(self.model[temp]['Z'],temp)
+
+    # def process_DYN_step3(self):
+    #
+    #     minfn()
+
+
+
+    def minfn(self,temp,do_hyst):
+
+        model = processOCV(data_dir='../data/P14_OCV/')
+        model.run()
+
+        numfiles = len(self.temps)
+
+        xplots = math.ceil(np.sqrt(numfiles))
+        yplots = math.ceil(numfiles/xplots)
+        rmserr = np.zeros((1,xplots*yplots))
+
+        G = self.model[temp]['GParam']
+        Q = self.model[temp]['Q']
+        eta = self.model[temp]['eta']
+        RC = self.model[temp]['RCParam']
+        numpoles = len(RC)
+
+        for ind,temp in enumerate(self.temps):
+            current = self.data[temp]['script1']['current']
+            voltage = self.data[temp]['script1']['voltage']
+            #time = np.ar
+            charge_indices = np.where(self.data[temp]['script1']['current'] < 0)
+            corrected_current = self.data[temp]['script1']['current']
+            corrected_current[charge_indices] = eta*corrected_current[charge_indices]
+
+            h = 0*current
+            s = 0*current
+
+            fac = np.exp(-abs(G*corrected_current/(3600*Q)))
+
+            for i in range(1,len(current)):
+
+                h[i] = fac[i-1]*h[i-1] + (fac[i-1]-1)*np.sign(current[i-1])
+                s[i] = np.sign(current[i])
+                if abs(current[i]) < Q/100:
+                    s[i] = s[i-1]
+
+            # First modeling step: Compute error with model = OCV only
+            voltage_est_1 = self.model[temp]['OCV'][0]
+            verr = voltage - voltage_est_1
+            self.model[temp]['vest1'] = verr
+
+            v1 = model.SOC_temp_to_OCV(0.95,temp)[0]
+            v2 = model.SOC_temp_to_OCV(0.05,temp)[0]
+            N1 = np.where(voltage<v1)[0]
+            N2 = np.where(voltage<v2)[0]
+
+            if N1.size == 0:
+                N1 = 1
+            else:
+                N1 = N1[0]
+
+            if N2.size == 0:
+                N2 = len(verr)
+            else:
+                N2 = N2[0]
+
+            rmserr = np.sqrt(np.mean(verr[N1:N2]**2))
+            cost = np.sum(rmserr)
+
+            print('RMS error for present value of gamma = %f (mV)' % (np.round(cost*1000,2)))
