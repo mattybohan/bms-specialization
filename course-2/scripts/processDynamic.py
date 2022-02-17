@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import scipy.linalg as la
-from scipy.optimize import nnls
+import scipy.optimize
+from scipy.optimize import nnls,brentq
 from scipy.interpolate import interp1d
 from joblib import dump,load
 from processOCV import processOCV
@@ -87,6 +88,7 @@ class ProcessDynamic:
         self.num_poles = num_poles
         self.do_hyst = do_hyst
         self.data = dict()
+        self.bestcost = np.inf
 
     def load_data(self,verbose=False):
 
@@ -154,22 +156,35 @@ class ProcessDynamic:
             self.model[temp]['Z'] = 1 - np.cumsum(corrected_current)/int(self.model[temp]['Q']*3600)
             self.model[temp]['OCV'] = model.SOC_temp_to_OCV(self.model[temp]['Z'],temp)
 
+    def process_DYN_step3(self,do_hyst):
 
-    # def process_DYN_step3(self):
+        for temp in self.temps:
+            print('Processing temperature: ',temp)
 
-        # 1.) Create NaN variable placeholders for all params, one for each temp (3)
-        # 2.) Set bestcost to infinity, iterate through each of 3 Temps, and run :
-        #    - If doHyst:
-        #        Worry about this later
-        #    - Else:
-        #        GParam = 0
-        #        Run optfn
-        #           - Optfn just runs minfn, but keeps track of a global variable best cost
+            if do_hyst:
+                function = lambda x: self.optfn(x,temp,do_hyst)
+                self.model[temp]['G'] = scipy.optimize.brentq(function,-1000,2500)[0]
+            else:
+                GParam = 0
+                self.optfn(GParam,temp,do_hyst)
+
+    def optfn(self,GParam,temp,do_hyst):
+
+        self.model[temp]['G'] = GParam
+        cost = self.minfn(temp,do_hyst)
+        print(GParam,cost,self.bestcost)
+
+        if cost < self.bestcost:
+            self.bestcost = cost
+            print('The model created for this value of gamma is the best ESC model yet!')
+
+        return cost
+
 
     def minfn(self,temp,do_hyst):
-
-        model = processOCV(data_dir='../data/P14_OCV/')
-        model.run()
+        #
+        # model = processOCV(data_dir='../data/P14_OCV/')
+        # model.run()
 
         numfiles = len(self.temps)
         xplots = math.ceil(math.sqrt(numfiles))
@@ -179,13 +194,13 @@ class ProcessDynamic:
         G = self.model[temp]['GParam']
         Q = self.model[temp]['Q']
         eta = self.model[temp]['eta']
-        RC = self.model[temp]['RCParam']
-        numpoles = len(RC)
-        # print(temp,G)
-        # print(temp,Q)
-        # print(temp,eta)
-        # print(temp,RC)
-        # print(temp,numpoles)
+        # RC = self.model[temp]['RCParam']
+        # numpoles = len(RC)
+        # # print(temp,G)
+        # # print(temp,Q)
+        # # print(temp,eta)
+        # # print(temp,RC)
+        # # print(temp,numpoles)
 
         current = self.data[temp]['script1']['current']
         voltage = self.data[temp]['script1']['voltage']
@@ -200,7 +215,6 @@ class ProcessDynamic:
         fac = np.exp(-abs(G*corrected_current/(3600*Q)))
 
         for i in range(1,len(current)):
-
             h[i] = fac[i-1]*h[i-1] + (fac[i-1]-1)*np.sign(current[i-1])
             s[i] = np.sign(current[i])
             if abs(current[i]) < Q/100:
@@ -212,6 +226,8 @@ class ProcessDynamic:
         self.model[temp]['vest1'] = vest1
         self.model[temp]['verr1'] = verr
         self.model[temp]['current'] = current
+        self.model[temp]['h'] = h
+        self.model[temp]['s'] = s
         self.model[temp]['corrected_current'] = corrected_current
 
         # Second modeling step: Compute time constants in "A" matrix
@@ -233,31 +249,51 @@ class ProcessDynamic:
 
         vrcRaw = np.zeros((self.num_poles,len(h)))
 
+        self.model[temp]['vrcRaw'] = vrcRaw
+
         for i in range(1,len(current)):
             vrcRaw[:,i] = np.diag(RCfact)*vrcRaw[:,i-1] + (1-RCfact)*current[i-1]
 
+        if do_hyst:
+            print('hyst on')
+            H = [h,s,-current,-vrcRaw[0]]
+            H = np.vstack((H[0],H[1],H[2],H[3]))
+            W = nnls(H.T,verr)[0]
+            M = W[0]
+            M0 = W[1]
+            R0 = W[2]
+            Rfact = W[3]
 
-        # Not computing hysteresis yet
-
-        H = [-current,-vrcRaw.T]
-        H = np.vstack((H[0],H[1].T[0]))
-        W = nnls(H.T, verr)[0]
-        M=0
-        M0=0
-        R0 = W[0]
-        Rfact = W[1]
-
+        else:
+            print('hyst off')
+            H = [-current,-vrcRaw.T]
+            H = np.vstack((H[0],H[1].T[0]))
+            W = nnls(H.T, verr)[0]
+            M=0
+            M0=0
+            R0 = W[0]
+            Rfact = W[1]
 
         vest2 = vest1 + M*h + M0*s - R0*current - vrcRaw[0]*Rfact
         verr = voltage - vest2
+
+        # Set params
+        self.model[temp]['R0'] = R0
+        self.model[temp]['M0'] = M0
+        self.model[temp]['M'] = M
+        self.model[temp]['RC'] = RC
+        self.model[temp]['Rfact'] = Rfact
 
         self.model[temp]['test1'] = R0*current
         self.model[temp]['test2'] = vrcRaw*Rfact
         self.model[temp]['vest2'] = vest2
         self.model[temp]['verr2'] = verr
 
-        v1 = model.SOC_temp_to_OCV(0.95,temp)[0]
-        v2 = model.SOC_temp_to_OCV(0.05,temp)[0]
+        OCVstatic = processOCV(data_dir='../data/P14_OCV/')
+        OCVstatic.run()
+
+        v1 = OCVstatic.SOC_temp_to_OCV(0.95,temp)[0]
+        v2 = OCVstatic.SOC_temp_to_OCV(0.05,temp)[0]
         N1 = np.where(voltage<v1)[0]
         N2 = np.where(voltage<v2)[0]
 
@@ -275,3 +311,5 @@ class ProcessDynamic:
         cost = np.sum(rmserr)
 
         print('RMS error for present value of gamma = %f (mV)' % (np.round(cost*1000,2)))
+
+        return cost

@@ -159,9 +159,7 @@ function model = processDynamic(data,model,numpoles,doHyst)
     fprintf('Processing temperature %d\n',model.temps(theTemp));
     bestcost = Inf;
     if doHyst,
-      model.GParam(theTemp) = abs(fminbnd(@(x) optfn(x,data,...
-                                  model,model.temps(theTemp),...
-                                  doHyst),1,250,options));
+      model.GParam(theTemp) = abs(fminbnd(@(x) optfn(x,data,model,model.temps(theTemp),doHyst),1,250,options))
     else
       model.GParam(theTemp) = 0;
       theGParam = 0;
