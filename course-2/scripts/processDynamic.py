@@ -2,9 +2,14 @@ import scipy.io, math
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import scipy.linalg as la
+from scipy.optimize import nnls
 from scipy.interpolate import interp1d
 from joblib import dump,load
 from processOCV import processOCV
+
+from oct2py import octave
+octave.addpath('~/github/bms-specialization/course-2/scripts/')
 
 # --------------------------------------------------------------------
 # function processDynamic
@@ -66,7 +71,7 @@ from processOCV import processOCV
   #   global bestcost
 
 
-class processDynamic:
+class ProcessDynamic:
 
     def __init__(self, \
             data_dir='P14_DYN/', \
@@ -128,7 +133,7 @@ class processDynamic:
             + self.data[temp]['script2']['disAh'][-1] \
             - self.eta_25*self.data[temp]['script1']['chgAh'][-1] \
             - self.eta_25*self.data[temp]['script2']['chgAh'][-1]
-            print(temp,Q_t)
+            print(temp,Q_t,eta_t)
 
             self.model[temp]['Q'] = Q_t
             self.model[temp]['eta'] = eta_t
@@ -140,6 +145,7 @@ class processDynamic:
         model.run()
 
         for temp in self.temps:
+
             eta_param = self.model[temp]['eta']
             charge_indices = np.where(self.data[temp]['script1']['current'] < 0)
             corrected_current = self.data[temp]['script1']['current']
@@ -148,11 +154,17 @@ class processDynamic:
             self.model[temp]['Z'] = 1 - np.cumsum(corrected_current)/int(self.model[temp]['Q']*3600)
             self.model[temp]['OCV'] = model.SOC_temp_to_OCV(self.model[temp]['Z'],temp)
 
+
     # def process_DYN_step3(self):
-    #
-    #     minfn()
 
-
+        # 1.) Create NaN variable placeholders for all params, one for each temp (3)
+        # 2.) Set bestcost to infinity, iterate through each of 3 Temps, and run :
+        #    - If doHyst:
+        #        Worry about this later
+        #    - Else:
+        #        GParam = 0
+        #        Run optfn
+        #           - Optfn just runs minfn, but keeps track of a global variable best cost
 
     def minfn(self,temp,do_hyst):
 
@@ -160,8 +172,7 @@ class processDynamic:
         model.run()
 
         numfiles = len(self.temps)
-
-        xplots = math.ceil(np.sqrt(numfiles))
+        xplots = math.ceil(math.sqrt(numfiles))
         yplots = math.ceil(numfiles/xplots)
         rmserr = np.zeros((1,xplots*yplots))
 
@@ -170,48 +181,97 @@ class processDynamic:
         eta = self.model[temp]['eta']
         RC = self.model[temp]['RCParam']
         numpoles = len(RC)
+        # print(temp,G)
+        # print(temp,Q)
+        # print(temp,eta)
+        # print(temp,RC)
+        # print(temp,numpoles)
 
-        for ind,temp in enumerate(self.temps):
-            current = self.data[temp]['script1']['current']
-            voltage = self.data[temp]['script1']['voltage']
-            #time = np.ar
-            charge_indices = np.where(self.data[temp]['script1']['current'] < 0)
-            corrected_current = self.data[temp]['script1']['current']
-            corrected_current[charge_indices] = eta*corrected_current[charge_indices]
+        current = self.data[temp]['script1']['current']
+        voltage = self.data[temp]['script1']['voltage']
+        #time = np.ar
+        charge_indices = np.where(self.data[temp]['script1']['current'] < 0)
+        corrected_current = self.data[temp]['script1']['current']
+        corrected_current[charge_indices] = eta*corrected_current[charge_indices]
 
-            h = 0*current
-            s = 0*current
+        h = 0*current
+        s = 0*current
 
-            fac = np.exp(-abs(G*corrected_current/(3600*Q)))
+        fac = np.exp(-abs(G*corrected_current/(3600*Q)))
 
-            for i in range(1,len(current)):
+        for i in range(1,len(current)):
 
-                h[i] = fac[i-1]*h[i-1] + (fac[i-1]-1)*np.sign(current[i-1])
-                s[i] = np.sign(current[i])
-                if abs(current[i]) < Q/100:
-                    s[i] = s[i-1]
+            h[i] = fac[i-1]*h[i-1] + (fac[i-1]-1)*np.sign(current[i-1])
+            s[i] = np.sign(current[i])
+            if abs(current[i]) < Q/100:
+                s[i] = s[i-1]
 
-            # First modeling step: Compute error with model = OCV only
-            voltage_est_1 = self.model[temp]['OCV'][0]
-            verr = voltage - voltage_est_1
-            self.model[temp]['vest1'] = verr
+        # First modeling step: Compute error with model = OCV only
+        vest1 = self.model[temp]['OCV'][0]
+        verr = voltage - vest1
+        self.model[temp]['vest1'] = vest1
+        self.model[temp]['verr1'] = verr
+        self.model[temp]['current'] = current
+        self.model[temp]['corrected_current'] = corrected_current
 
-            v1 = model.SOC_temp_to_OCV(0.95,temp)[0]
-            v2 = model.SOC_temp_to_OCV(0.05,temp)[0]
-            N1 = np.where(voltage<v1)[0]
-            N2 = np.where(voltage<v2)[0]
+        # Second modeling step: Compute time constants in "A" matrix
+        num_poles = self.num_poles
 
-            if N1.size == 0:
-                N1 = 1
-            else:
-                N1 = N1[0]
+        while True:
+            A = octave.SISOsubid(-np.diff(verr),np.diff(corrected_current),num_poles)
+            eigA = la.eig(np.identity(1)*A)[0]
+            eigA = eigA[eigA == np.conj(eigA)]
+            eigA = eigA[eigA > 0 and eigA < 1]
+            okpoles = len(eigA)
+            num_poles = num_poles+1
+            if okpoles >= self.num_poles:
+                break
 
-            if N2.size == 0:
-                N2 = len(verr)
-            else:
-                N2 = N2[0]
+        RCfact = np.sort(eigA)
+        # COME BACK placeholder for indexing
+        RC = -1./np.log(RCfact)
 
-            rmserr = np.sqrt(np.mean(verr[N1:N2]**2))
-            cost = np.sum(rmserr)
+        vrcRaw = np.zeros((self.num_poles,len(h)))
 
-            print('RMS error for present value of gamma = %f (mV)' % (np.round(cost*1000,2)))
+        for i in range(1,len(current)):
+            vrcRaw[:,i] = np.diag(RCfact)*vrcRaw[:,i-1] + (1-RCfact)*current[i-1]
+
+
+        # Not computing hysteresis yet
+
+        H = [-current,-vrcRaw.T]
+        H = np.vstack((H[0],H[1].T[0]))
+        W = nnls(H.T, verr)[0]
+        M=0
+        M0=0
+        R0 = W[0]
+        Rfact = W[1]
+
+
+        vest2 = vest1 + M*h + M0*s - R0*current - vrcRaw[0]*Rfact
+        verr = voltage - vest2
+
+        self.model[temp]['test1'] = R0*current
+        self.model[temp]['test2'] = vrcRaw*Rfact
+        self.model[temp]['vest2'] = vest2
+        self.model[temp]['verr2'] = verr
+
+        v1 = model.SOC_temp_to_OCV(0.95,temp)[0]
+        v2 = model.SOC_temp_to_OCV(0.05,temp)[0]
+        N1 = np.where(voltage<v1)[0]
+        N2 = np.where(voltage<v2)[0]
+
+        if N1.size == 0:
+            N1 = 1
+        else:
+            N1 = N1[0]
+
+        if N2.size == 0:
+            N2 = len(verr)
+        else:
+            N2 = N2[0]
+
+        rmserr = np.sqrt(np.mean(verr[N1:N2]**2))
+        cost = np.sum(rmserr)
+
+        print('RMS error for present value of gamma = %f (mV)' % (np.round(cost*1000,2)))

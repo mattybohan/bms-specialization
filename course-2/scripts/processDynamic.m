@@ -131,6 +131,9 @@ function model = processDynamic(data,model,numpoles,doHyst)
     model.QParam(k)   = mean(allQs(alltemps == model.temps(k)));
   end
 
+  model.etaParam
+  model.QParam
+
   % ------------------------------------------------------------------
   % Step 2: Compute OCV for "discharge portion" of test
   % ------------------------------------------------------------------
@@ -189,30 +192,38 @@ return
 % --------------------------------------------------------------------
 function [cost,model]=minfn(data,model,theTemp,doHyst)
   alltemps = [data(:).temp];
-  ind = find(alltemps == theTemp); numfiles = length(ind);
+  ind = find(alltemps == theTemp);
+  numfiles = length(ind);
 
   xplots = ceil(sqrt(numfiles));
   yplots = ceil(numfiles/xplots);
   rmserr = zeros(1,xplots*yplots);
 
-  G = abs(getParamESC('GParam',theTemp,model));
-  Q = abs(getParamESC('QParam',theTemp,model));
-  eta = abs(getParamESC('etaParam',theTemp,model));
-  RC = getParamESC('RCParam',theTemp,model);
-  numpoles = length(RC);
+  G = abs(getParamESC('GParam',theTemp,model))
+  Q = abs(getParamESC('QParam',theTemp,model))
+  eta = abs(getParamESC('etaParam',theTemp,model))
+  RC = getParamESC('RCParam',theTemp,model)
+  numpoles = length(RC)
+
 
   for thefile = 1:numfiles;
+
     ik = data(ind(thefile)).script1.current(:);
     vk = data(ind(thefile)).script1.voltage(:);
     tk = (1:length(vk))-1;
-    etaik = ik; etaik(ik<0) = etaik(ik<0)*eta;
+    etaik = ik;
+    etaik(ik<0) = etaik(ik<0)*eta;
 
-    h=0*ik; sik = 0*ik;
+    h=0*ik;
+    sik = 0*ik;
     fac=exp(-abs(G*etaik/(3600*Q)));
+
     for k=2:length(ik),
       h(k)=fac(k-1)*h(k-1)+(fac(k-1)-1)*sign(ik(k-1));
       sik(k) = sign(ik(k));
-      if abs(ik(k))<Q/100, sik(k) = sik(k-1); end
+      if abs(ik(k))<Q/100,
+        sik(k) = sik(k-1);
+      end
     end
 
     % First modeling step: Compute error with model = OCV only
@@ -222,16 +233,21 @@ function [cost,model]=minfn(data,model,theTemp,doHyst)
     % Second modeling step: Compute time constants in "A" matrix
     np = numpoles;
     while 1,
-      A = SISOsubid(-diff(verr),diff(etaik),np);
-      eigA = eig(A);
+      A = SISOsubid(-diff(verr),diff(etaik),np)
+      eigA = eig(A)
       eigA = eigA(eigA == conj(eigA));  % make sure real
       eigA = eigA(eigA > 0 & eigA < 1); % make sure in range
-      okpoles = length(eigA); np = np+1;
-      if okpoles >= numpoles, break; end
+      okpoles = length(eigA);
+      np = np+1;
+      if okpoles >= numpoles,
+        break;
+      end
       fprintf('Trying np = %d\n',np);
     end
-    RCfact = sort(eigA); RCfact = RCfact(end-numpoles+1:end);
-    RC = -1./log(RCfact);
+    RCfact = sort(eigA);
+    RCfact = RCfact(end-numpoles+1:end);
+    RC = -1./log(RCfact)
+
     % Simulate the R-C filters to find R-C currents
     vrcRaw = zeros(numpoles,length(h));
     for k=2:length(ik),
@@ -247,8 +263,12 @@ function [cost,model]=minfn(data,model,theTemp,doHyst)
     else
       H = [-etaik,-vrcRaw];
       W = H\verr;
-      M=0; M0=0; R0 = W(1); Rfact = W(2:end)';
+      M=0;
+      M0=0;
+      R0 = W(1)
+      Rfact = W(2:end)'
     end
+
     ind = find(model.temps == data(ind(thefile)).temp,1);
     model.R0Param(ind) = R0;
     model.M0Param(ind) = M0;
@@ -262,13 +282,19 @@ function [cost,model]=minfn(data,model,theTemp,doHyst)
     % Compute RMS error only on data roughly in 5% to 95% SOC
     v1 = OCVfromSOCtemp(0.95,data(ind(thefile)).temp,model);
     v2 = OCVfromSOCtemp(0.05,data(ind(thefile)).temp,model);
-    N1 = find(vk<v1,1,'first'); N2 = find(vk<v2,1,'first');
-    if isempty(N1), N1=1; end; if isempty(N2), N2=length(verr); end
+    N1 = find(vk<v1,1,'first');
+    N2 = find(vk<v2,1,'first');
+    if isempty(N1),
+      N1=1;
+    end;
+    if isempty(N2),
+      N2=length(verr);
+    end
     rmserr(thefile)=sqrt(mean(verr(N1:N2).^2));
   end
 
   cost=sum(rmserr);
-  fprintf('  RMS error for present value of gamma = %0.2f (mV)\n',cost*1000);
+  fprintf('RMS error for present value of gamma = %0.2f (mV)',cost*1000);
   if isnan(cost), stop, end
 return
 
