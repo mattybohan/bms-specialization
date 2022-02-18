@@ -44,8 +44,8 @@ for indID = 1:length(cellIDs), % process each cell type
   end
 
   model = processDynamic(data,model,numpoles,doHyst);
-  modelFile = sprintf('%../data/smodel.mat',cellID);
+  modelFile = sprintf('../data/%smodel.mat',cellID);
   save(modelFile,'model');
 
-  fprintf('\nDynamic model created!\n');
+  fprintf('Dynamic model created!');
 end

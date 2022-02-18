@@ -162,8 +162,8 @@ class ProcessDynamic:
             print('Processing temperature: ',temp)
 
             if do_hyst:
-                function = lambda x: self.optfn(x,temp,do_hyst)
-                self.model[temp]['G'] = scipy.optimize.brentq(function,-1000,2500)[0]
+                function = lambda x_G: self.optfn(x_G,temp,do_hyst)
+                self.model[temp]['G'] = scipy.optimize.fminbound(function,1,250,xtol=0.1,maxfun=40)
             else:
                 GParam = 0
                 self.optfn(GParam,temp,do_hyst)
@@ -171,17 +171,18 @@ class ProcessDynamic:
     def optfn(self,GParam,temp,do_hyst):
 
         self.model[temp]['G'] = GParam
-        cost = self.minfn(temp,do_hyst)
-        print(GParam,cost,self.bestcost)
+        #print('Updated G value, optfn', GParam, 'temp',temp,'do_hyst',do_hyst)
+        cost = self.minfn(temp,do_hyst,GParam)
+        #print(GParam,cost,self.bestcost)
 
         if cost < self.bestcost:
             self.bestcost = cost
-            print('The model created for this value of gamma is the best ESC model yet!')
+            print('The model created for this value of gamma is the best ESC model yet! GParam = ',GParam)
 
         return cost
 
 
-    def minfn(self,temp,do_hyst):
+    def minfn(self,temp,do_hyst,GParam):
         #
         # model = processOCV(data_dir='../data/P14_OCV/')
         # model.run()
@@ -191,7 +192,9 @@ class ProcessDynamic:
         yplots = math.ceil(numfiles/xplots)
         rmserr = np.zeros((1,xplots*yplots))
 
-        G = self.model[temp]['GParam']
+        #G = self.model[temp]['GParam']
+        G = GParam
+        #print('Updated G value, minfn', G, 'temp',temp,'do_hyst',do_hyst)
         Q = self.model[temp]['Q']
         eta = self.model[temp]['eta']
         # RC = self.model[temp]['RCParam']
@@ -213,6 +216,7 @@ class ProcessDynamic:
         s = 0*current
 
         fac = np.exp(-abs(G*corrected_current/(3600*Q)))
+        #print('fac ',fac[1000], 'G ',G)
 
         for i in range(1,len(current)):
             h[i] = fac[i-1]*h[i-1] + (fac[i-1]-1)*np.sign(current[i-1])
@@ -255,7 +259,7 @@ class ProcessDynamic:
             vrcRaw[:,i] = np.diag(RCfact)*vrcRaw[:,i-1] + (1-RCfact)*current[i-1]
 
         if do_hyst:
-            print('hyst on')
+            #print('hyst on')
             H = [h,s,-current,-vrcRaw[0]]
             H = np.vstack((H[0],H[1],H[2],H[3]))
             W = nnls(H.T,verr)[0]
@@ -263,9 +267,11 @@ class ProcessDynamic:
             M0 = W[1]
             R0 = W[2]
             Rfact = W[3]
+            #print('look here',M,M0,R0,Rfact)
+            #print(H[0][-1],H[1][-1],H[2][-1],H[3][-1])
 
         else:
-            print('hyst off')
+            #print('hyst off')
             H = [-current,-vrcRaw.T]
             H = np.vstack((H[0],H[1].T[0]))
             W = nnls(H.T, verr)[0]
