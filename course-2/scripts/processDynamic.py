@@ -77,7 +77,7 @@ class ProcessDynamic:
     def __init__(self, \
             data_dir='P14_DYN/', \
             model_dir='data/', \
-            num_poles=1, \
+            num_poles=2, \
             do_hyst=1):
         self.model = scipy.io.loadmat('../data/p14model-ocv-mat7.mat', simplify_cells=True)['model']
         self.data_dir = data_dir
@@ -107,7 +107,7 @@ class ProcessDynamic:
             self.model[key]['GParam'] = 0
             self.model[key]['RCParam'] = [0]
 
-    def process_DYN_step1(self):
+    def compute_test_params(self):
 
         # Step 1: Compute capacity and coulombic efficiency for every test
         self.temps = list(self.data.keys())
@@ -140,7 +140,7 @@ class ProcessDynamic:
             self.model[temp]['Q'] = Q_t
             self.model[temp]['eta'] = eta_t
 
-    def process_DYN_step2(self):
+    def compute_ocv_soc(self):
 
         # Step 2: Compute OCV for "discharge portion" of test
         model = processOCV(data_dir='../data/P14_OCV/')
@@ -156,10 +156,11 @@ class ProcessDynamic:
             self.model[temp]['Z'] = 1 - np.cumsum(corrected_current)/int(self.model[temp]['Q']*3600)
             self.model[temp]['OCV'] = model.SOC_temp_to_OCV(self.model[temp]['Z'],temp)
 
-    def process_DYN_step3(self,do_hyst):
+    def compute_dynamic_params(self,do_hyst):
 
         for temp in self.temps:
             print('Processing temperature: ',temp)
+            self.bestcost = np.inf
 
             if do_hyst:
                 function = lambda x_G: self.optfn(x_G,temp,do_hyst)
@@ -171,9 +172,7 @@ class ProcessDynamic:
     def optfn(self,GParam,temp,do_hyst):
 
         self.model[temp]['G'] = GParam
-        #print('Updated G value, optfn', GParam, 'temp',temp,'do_hyst',do_hyst)
         cost = self.minfn(temp,do_hyst,GParam)
-        #print(GParam,cost,self.bestcost)
 
         if cost < self.bestcost:
             self.bestcost = cost
@@ -183,27 +182,15 @@ class ProcessDynamic:
 
 
     def minfn(self,temp,do_hyst,GParam):
-        #
-        # model = processOCV(data_dir='../data/P14_OCV/')
-        # model.run()
 
         numfiles = len(self.temps)
         xplots = math.ceil(math.sqrt(numfiles))
         yplots = math.ceil(numfiles/xplots)
         rmserr = np.zeros((1,xplots*yplots))
 
-        #G = self.model[temp]['GParam']
         G = GParam
-        #print('Updated G value, minfn', G, 'temp',temp,'do_hyst',do_hyst)
         Q = self.model[temp]['Q']
         eta = self.model[temp]['eta']
-        # RC = self.model[temp]['RCParam']
-        # numpoles = len(RC)
-        # # print(temp,G)
-        # # print(temp,Q)
-        # # print(temp,eta)
-        # # print(temp,RC)
-        # # print(temp,numpoles)
 
         current = self.data[temp]['script1']['current']
         voltage = self.data[temp]['script1']['voltage']
@@ -216,7 +203,6 @@ class ProcessDynamic:
         s = 0*current
 
         fac = np.exp(-abs(G*corrected_current/(3600*Q)))
-        #print('fac ',fac[1000], 'G ',G)
 
         for i in range(1,len(current)):
             h[i] = fac[i-1]*h[i-1] + (fac[i-1]-1)*np.sign(current[i-1])
@@ -241,38 +227,57 @@ class ProcessDynamic:
             A = octave.SISOsubid(-np.diff(verr),np.diff(corrected_current),num_poles)
             eigA = la.eig(np.identity(1)*A)[0]
             eigA = eigA[eigA == np.conj(eigA)]
-            eigA = eigA[eigA > 0 and eigA < 1]
+            eigA = eigA[eigA > 0]
+            eigA = eigA[eigA < 1]
             okpoles = len(eigA)
             num_poles = num_poles+1
             if okpoles >= self.num_poles:
                 break
+            print('Trying np = ',num_poles)
 
         RCfact = np.sort(eigA)
-        # COME BACK placeholder for indexing
+        print('rcfact before',RCfact)
+        RCfact = RCfact[-self.num_poles:]
+        print('rcfact after',RCfact)
+
         RC = -1./np.log(RCfact)
 
         vrcRaw = np.zeros((self.num_poles,len(h)))
 
-        self.model[temp]['vrcRaw'] = vrcRaw
+        #self.model[temp]['vrcRaw'] = vrcRaw
 
-        for i in range(1,len(current)):
-            vrcRaw[:,i] = np.diag(RCfact)*vrcRaw[:,i-1] + (1-RCfact)*current[i-1]
+        # Simulate the R-C filters to find R-C currents
+        for i in range(1,len(current)-1):
+            vrcRaw[:,i:i+2] = np.diag(RCfact)*vrcRaw[:,i-1] + (1-RCfact)*current[i-1]
+
+        self.model[temp]['vrcRaw_mod'] = vrcRaw
+        self.model[temp]['RCfact'] = RCfact
+
+        vrcRaw = vrcRaw.T
+
+        self.model[temp]['h'] = h
+        self.model[temp]['s'] = s
+        self.model[temp]['current'] = current
+        self.model[temp]['vrcraw'] = vrcRaw
 
         if do_hyst:
             #print('hyst on')
-            H = [h,s,-current,-vrcRaw[0]]
-            H = np.vstack((H[0],H[1],H[2],H[3]))
+            H = np.vstack((h,s,-current,-vrcRaw.T))
+            self.model[temp]['H'] = H
             W = nnls(H.T,verr)[0]
             M = W[0]
             M0 = W[1]
             R0 = W[2]
-            Rfact = W[3]
+            Rfact = W[3:]
+            #print(W.shape)
             #print('look here',M,M0,R0,Rfact)
             #print(H[0][-1],H[1][-1],H[2][-1],H[3][-1])
+            print('W',W)
+            print('Rfact',Rfact)
 
         else:
             #print('hyst off')
-            H = [-current,-vrcRaw.T]
+            H = [-current,-vrcRaw]
             H = np.vstack((H[0],H[1].T[0]))
             W = nnls(H.T, verr)[0]
             M=0
@@ -280,7 +285,14 @@ class ProcessDynamic:
             R0 = W[0]
             Rfact = W[1]
 
-        vest2 = vest1 + M*h + M0*s - R0*current - vrcRaw[0]*Rfact
+        #vrcRaw = vrcRaw.T
+
+        print('vest1',vest1.shape)
+        print('vrcRaw',vrcRaw.shape)
+        print('Rfact',Rfact.shape)
+        print('R0',R0.shape)
+
+        vest2 = vest1 + M*h + M0*s - R0*current - vrcRaw*Rfact.T
         verr = voltage - vest2
 
         # Set params
@@ -316,6 +328,6 @@ class ProcessDynamic:
         rmserr = np.sqrt(np.mean(verr[N1:N2]**2))
         cost = np.sum(rmserr)
 
-        print('RMS error for present value of gamma = %f (mV)' % (np.round(cost*1000,2)))
+        print('RMS error for present value of gamma = %f (mV). Gamma = %f' % (np.round(cost*1000,2),GParam))
 
         return cost

@@ -7,7 +7,7 @@
 % to be processed.
 
 setupDynData; % get list of files to be processed
-numpoles = 1; % number of resistor--capacitor pairs in final model
+numpoles = 2; % number of resistor--capacitor pairs in final model
 doHyst = 1;   % whether to include hysteresis in model
 
 for indID = 1:length(cellIDs), % process each cell type

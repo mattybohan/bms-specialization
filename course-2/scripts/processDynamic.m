@@ -205,27 +205,45 @@ function [cost,model]=minfn(data,model,theTemp,doHyst)
       eigA = eig(A);
       eigA = eigA(eigA == conj(eigA));  % make sure real
       eigA = eigA(eigA > 0 & eigA < 1); % make sure in range
-      okpoles = length(eigA); np = np+1;
-      if okpoles >= numpoles, break; end
+      okpoles = length(eigA);
+      np = np+1;
+      if okpoles >= numpoles,
+        break;
+      end
       fprintf('Trying np = %d\n',np);
     end
-    RCfact = sort(eigA); RCfact = RCfact(end-numpoles+1:end);
+    RCfact = sort(eigA);
+    RCfact = RCfact(end-numpoles+1:end);
     RC = -1./log(RCfact);
     % Simulate the R-C filters to find R-C currents
     vrcRaw = zeros(numpoles,length(h));
+
     for k=2:length(ik),
-      vrcRaw(:,k) = diag(RCfact)*vrcRaw(:,k-1) + (1-RCfact)*etaik(k-1);
+      vrcRaw(:,k) = diag(RCfact)*vrcRaw(:,k-1)+(1-RCfact)*etaik(k-1);
     end
+
+    vrcRaw
+
     vrcRaw = vrcRaw';
+
+    if theTemp = 5,
+      save('-mat7-binary','../data/vrc_raw.mat','vrcRaw','etaik','RCfact','ik','h');
+    end
 
     % Third modeling step: Hysteresis parameters
     if doHyst,
       H = [h,sik,-etaik,-vrcRaw];
+      if theTemp = 5,
+        save('-mat7-binary','../data/H.mat','H');
+      end
       W = lsqnonneg(H,verr); %  W = H\verr;
+      W
       M = W(1);
       M0 = W(2);
       R0 = W(3);
-      Rfact = W(4:end)';
+      Rfact = W(4:end)'
+      ndims(Rfact);
+      length(Rfact);
     else
       H = [-etaik,-vrcRaw];
       W = H\verr;
@@ -250,7 +268,7 @@ function [cost,model]=minfn(data,model,theTemp,doHyst)
   end
 
   cost=sum(rmserr);
-  fprintf('  RMS error for present value of gamma = %0.2f (mV)\n',cost*1000);
+  fprintf('  RMS error for present value (%0.2f) of gamma = %0.2f (mV)\n',G,cost*1000);
   if isnan(cost), stop, end
 return
 
